@@ -1,0 +1,106 @@
+---
+title: "gganimate"
+author: "L. Gebrekristos"
+date: "3/2/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Needed Packages
+
+```{r packages,warning=FALSE,message=FALSE}
+library(gganimate)
+library(png)
+library(gifski)
+library(av)
+library(DescTools)
+library(ggplot2)
+library(lubridate)
+library(dplyr)
+```
+
+## Data Cleaning
+
+Cleaning data for COVID-19 vaccinations, cases and deaths in PA by county.
+
+```{r import}
+#import
+setwd("C:/Users/lgebr/Dropbox/YEAR 1/WINTER 2021/Data Science/gganimate")
+vac<-read.csv("COVID-19_Vaccinations_by_Day_by_County_of_Residence_Current_Health.csv")
+cases<-read.csv("COVID-19_Aggregate_Cases_Current_Daily_County_Health.csv")
+death<-read.csv("COVID-19_Aggregate_Death_Data_Current_Daily_County_Health.csv")
+#date var
+cases$Date2<-mdy(cases$Date)
+death$Date2<-mdy(death$Date.of.Death)
+vac$Date2<-mdy(vac$Date)
+#missing to 0
+vac$Partially.Covered<-ifelse(is.na(vac$Partially.Covered),0,vac$Partially.Covered)
+vac$Fully.Covered<-ifelse(is.na(vac$Fully.Covered),0,vac$Fully.Covered)
+vac$NumberOfVaccinations<-vac$Partially.Covered+vac$Fully.Covered
+
+vac2<-vac %>%
+  group_by(County.Name) %>%
+  arrange(Date2,.by_group=TRUE)%>%
+  mutate(totalvac = cumsum(NumberOfVaccinations))
+#merging 
+deathcombo <- dplyr::left_join(death, vac2, by=c("County.Name","Date2"))
+casescombo <-dplyr::left_join(cases, vac2, by=c("Jurisdiction"="County.Name","Date2"))
+
+#subsetting to counties with highest deaths
+avgdeath<-deathcombo %>%
+  group_by(County.Name)%>%
+  summarise(cases=mean(Total.Deaths))
+subsetdeath<-deathcombo %>%
+  filter(!County.Name=="Pennsylvania")
+maxdeath<-subsetdeath %>%
+  filter(Date2< as.Date("2020-12-14")) %>%
+  group_by(County.Name)%>%
+  summarise(max=max(Total.Deaths))
+myvector <- maxdeath %>%
+  filter(max<300) %>% 
+  pull(County.Name)
+subsetdeath2<-subsetdeath %>%
+  filter(!County.Name %in% myvector)
+subsetcases<-casescombo %>%
+  filter(!Jurisdiction %in% myvector) %>%
+  filter(!Jurisdiction=="Pennsylvania")
+
+#making vaccinations pre rollout==0 and Xmas vaccinations==X-mas eve 
+subsetcases<-subsetcases %>%
+  mutate(totalvac=replace(totalvac,Date2< as.Date("2020-12-15"),0))
+
+subsetdeath2<-subsetdeath2 %>%
+  mutate(totalvac=replace(totalvac,Date2< as.Date("2020-12-15"),0))
+
+#ordering for replacing NA with previous date vaccination value  
+subsetcases <- subsetcases[order(subsetcases$Jurisdiction, subsetcases$Date2),]
+subsetdeath2 <- subsetdeath2[order(subsetdeath2$County.Name, subsetdeath2$Date2),]
+subsetcases$vaccinate <- LOCF( subsetcases$totalvac)
+subsetdeath2$vaccinate <- LOCF( subsetdeath2$totalvac)
+```
+
+# Creating plots
+
+```{r plots,warning=FALSE,message=FALSE}
+#cases plot
+ggplot(subsetcases,aes(x=Date2,y=New.Case.Rate,color=Jurisdiction,group=Jurisdiction))+
+  labs(title="COVID-19 Cases in PA", x="Date",y="New Cases per 100,000")+
+  geom_point(aes(group=seq_along(Date2)))+
+  geom_line()+
+  transition_reveal(along=Date2)
+#saving plot
+anim_save("cases.gif")
+
+#deaths plot
+ggplot(subsetdeath2,aes(x=Date2,y=Total.Deaths,color=County.Name,group=County.Name))+
+  labs(title="COVID-19 Deaths in PA", x="Date",y="Number of Total Deaths")+
+  geom_point(aes(group=seq_along(Date2)))+
+  geom_line()+
+  transition_reveal(along=Date2)
+```
+
